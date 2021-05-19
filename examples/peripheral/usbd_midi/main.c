@@ -267,7 +267,6 @@ static void usbd_user_ev_handler(app_usbd_event_type_t event)
 
 void bsp_event_callback(bsp_event_t ev)
 {
-
     uint8_t m_tx_buffer[USBD_MIDI_EVENT_SIZE];
     switch ((unsigned int)ev)
     {
