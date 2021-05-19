@@ -42,7 +42,8 @@
 
 #include "app_usbd_audio_types.h"
 #include "app_usbd_audio_internal.h"
-#include "nrf_queue.h"
+#include "nrf_ringbuf.h"
+#include "app_fifo.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -68,13 +69,6 @@ APP_USBD_CLASS_FORWARD(app_usbd_midi);
  *
  */
 enum app_usbd_midi_user_event_e;
-
-/**
- * @brief midi event in buffers.
- */
-typedef struct {
-    uint8_t * p_buff;
-} app_usbd_midi_buffer_t;
 
 /*lint -restore*/
 
@@ -109,9 +103,8 @@ typedef struct {
     uint16_t ep_size;                                       //!< Endpoint size
 
     app_usbd_audio_subclass_t type_streaming;               //!< Streaming type MIDISTREAMING/AUDIOSTREAMING (@ref app_usbd_midi_subclass_t)
-    app_usbd_midi_buffer_t    * p_buffer_in;                //!< Buffer IN
-    app_usbd_midi_buffer_t    * p_buffer_out;               //!< Buffer OUT
-    nrf_queue_t const * p_in_queue;                         //!< In queue
+    app_fifo_t * p_fifo_in;
+    nrf_ringbuf_t const * p_out_buf;                        //!< Out queue
     app_usbd_midi_user_ev_handler_t user_ev_handler;        //!< User event handler
 } app_usbd_midi_inst_t;
 
@@ -120,6 +113,7 @@ typedef struct {
  */
 typedef struct {
     app_usbd_audio_req_t    request;       //!< Audio class request.
+    bool                    sending;       //!< Sending flag
     bool                    streaming;     //!< Streaming flag
 } app_usbd_midi_ctx_t;
 
@@ -167,15 +161,15 @@ typedef struct {
                                     midi_descriptor,                \
                                     ep_siz,                         \
                                     type_str,                       \
-                                    in_queue,                       \
-                                    buff_in)                        \
+                                    p_fifo,                         \
+                                    out_buf)                        \
     .inst = {                                                       \
          .user_ev_handler = user_event_handler,                     \
          .p_midi_dsc      = midi_descriptor,                        \
          .ep_size         = ep_siz,                                 \
          .type_streaming  = type_str,                               \
-         .p_in_queue      = in_queue,                               \
-         .p_buffer_in     = buff_in,                                \
+         .p_fifo_in       = p_fifo,                                 \
+         .p_out_buf       = out_buf,                                \
     }
 
 /**
@@ -200,12 +194,9 @@ extern const app_usbd_class_methods_t app_usbd_midi_class_methods;
                                     interfaces_configs,             \
                                     user_ev_handler,                \
                                     midi_descriptor,                \
-                                    in_queue_size)                  \
-    static app_usbd_midi_buffer_t CONCAT_2(instance_name, _in);     \
-    NRF_QUEUE_DEF(app_usbd_midi_buffer_t,                           \
-                  instance_name##_queue_in,                         \
-                  in_queue_size,                                    \
-                  NRF_QUEUE_MODE_OVERFLOW);                         \
+                                    out_buf_size)                   \
+    NRF_RINGBUF_DEF(instance_name##_buf_out, out_buf_size); \
+    app_fifo_t instance_name##_fifo_in;                                              \
     APP_USBD_CLASS_INST_GLOBAL_DEF(                                 \
         instance_name,                                              \
         app_usbd_midi,                                              \
@@ -215,8 +206,8 @@ extern const app_usbd_class_methods_t app_usbd_midi_class_methods;
                                     midi_descriptor,                \
                                     0,                              \
                                     APP_USBD_AUDIO_SUBCLASS_MIDISTREAMING, \
-                                    &instance_name##_queue_in,      \
-                                    &CONCAT_2(instance_name, _in))) \
+                                    &instance_name##_fifo_in, \
+                                    &instance_name##_buf_out)) \
     )
 
 

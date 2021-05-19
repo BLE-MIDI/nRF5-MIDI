@@ -104,7 +104,7 @@
 /**
  * @brief USB Midi event size
  */
-#define BUFFER_SIZE 16
+#define RX_BUFFER_SIZE 256
 
 
 
@@ -168,16 +168,13 @@ APP_USBD_MIDI_GLOBAL_DEF(m_app_midi,
                           MIDI_INTERFACES_CONFIG(),
                           midi_user_ev_handler,
                           &m_midi_desc,
-                          BUFFER_SIZE
+                          RX_BUFFER_SIZE
 );
 
 
 /*lint -restore*/
 
-/**
- * @brief Midi rx buffer
- */
-static uint8_t m_rx_buffer[USBD_MIDI_EVENT_SIZE];
+
 
 /**
  * @brief User event handler @ref app_usbd_midi_user_ev_handler_t 
@@ -197,10 +194,6 @@ static void midi_user_ev_handler(app_usbd_class_inst_t const * p_inst,
             ret_code_t ret = bsp_buttons_enable();
             APP_ERROR_CHECK(ret);
 
-            /*Setup first transfer*/
-            app_usbd_midi_read(&m_app_midi,
-                                m_rx_buffer);
-
             break;
         }
         case APP_USBD_MIDI_USER_EVT_PORT_CLOSE:
@@ -210,9 +203,15 @@ static void midi_user_ev_handler(app_usbd_class_inst_t const * p_inst,
             break;
         case APP_USBD_MIDI_USER_EVT_RX_DONE:
         {
+            uint8_t m_rx_buffer[4];
+            ret_code_t ret = app_usbd_midi_get(&m_app_midi,
+                                                m_rx_buffer);
+            if(ret) {
+                NRF_LOG_INFO("ret get %d", ret);
+            }
             NRF_LOG_HEXDUMP_INFO(m_rx_buffer, 4);
-            app_usbd_midi_read(&m_app_midi,
-                                m_rx_buffer);
+            // app_usbd_midi_read(&m_app_midi,
+            //                     m_rx_buffer);
             
             bsp_board_led_invert(LED_MIDI_RX);
             break;
@@ -268,8 +267,8 @@ static void usbd_user_ev_handler(app_usbd_event_type_t event)
 
 void bsp_event_callback(bsp_event_t ev)
 {
-    // ret_code_t ret;
-    static uint8_t m_tx_buffer[USBD_MIDI_EVENT_SIZE];
+
+    uint8_t m_tx_buffer[USBD_MIDI_EVENT_SIZE];
     switch ((unsigned int)ev)
     {
         case BSP_EVENT_KEY_0:
@@ -297,11 +296,11 @@ void bsp_event_callback(bsp_event_t ev)
             MIDI_EVENT(m_tx_buffer, CODE_IDX_NOTE_OFF, NOTE_OFF, BTN_MIDI_KEY_3_NOTE, VELOCITY);
             break;
         default:
-            return; // no implementation needed      
+            return;   
     }
     
     app_usbd_midi_write(&m_app_midi, m_tx_buffer);
- 
+
 }
 
 static void init_bsp(void)

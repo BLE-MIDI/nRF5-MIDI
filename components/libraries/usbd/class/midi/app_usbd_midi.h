@@ -120,19 +120,19 @@ typedef enum app_usbd_midi_user_event_e {
  * @param user_ev_handler           User event handler.
  * @param midi_descriptor           Midi class Format descriptor.
  *
- * @note This macro is just simplified version of @ref APP_USBD_AUDIO_GLOBAL_DEF_INTERNAL
+ * @note This macro is just simplified version of @ref APP_USBD_MIDI_GLOBAL_DEF_INTERNAL
  *
  */
-#define APP_USBD_MIDI_GLOBAL_DEF(instance_name,       \
+#define APP_USBD_MIDI_GLOBAL_DEF(instance_name,             \
                                   interfaces_configs,       \
                                   user_ev_handler,          \
                                   midi_descriptor,          \
-                                  in_queue_size)           \
+                                  out_buf_size)             \
     APP_USBD_MIDI_GLOBAL_DEF_INTERNAL(instance_name,        \
                                        interfaces_configs,  \
                                        user_ev_handler,     \
                                        midi_descriptor,     \
-                                       in_queue_size)           \
+                                       out_buf_size)        \
 
 /**
  * @brief Initializer of Midi descriptor.
@@ -178,15 +178,15 @@ app_usbd_audio_class_get(app_usbd_class_inst_t const * p_inst)
 }
 
 /**
- * @brief Start midi data reading from the endpoint buffer.
+ * @brief Get midi data from the RX buffer.
  *
  */
-ret_code_t app_usbd_midi_read(app_usbd_midi_t const * p_midi,
-                            void *                     p_buf);
+ret_code_t app_usbd_midi_get(app_usbd_midi_t const * p_midi,
+                              uint8_t *              p_buf);
 
 
 /**
- * @brief Start midi data sending from the endpoint buffer.
+ * @brief Write midi data to TX buffer and start sending.
  *
  */
 ret_code_t app_usbd_midi_write(app_usbd_midi_t const * p_midi,
