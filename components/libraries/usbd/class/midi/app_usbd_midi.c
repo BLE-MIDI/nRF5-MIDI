@@ -475,18 +475,7 @@ static inline nrf_drv_usbd_ep_t ep_in_addr_get(app_usbd_class_inst_t const * p_i
     return app_usbd_class_ep_address_get(ep_cfg);
 }
 
-// static bool midi_send(nrf_ringbuf_t const * p_in_buf)
-// {
-//     size_t len = 4;
-//     uint8_t buf[len];
-//     nrf_ringbuf_cpy_get(p_in_buf, buf, &len);
-//     if (len) {
-//         NRF_DRV_USBD_TRANSFER_IN(transfer, buf, 4);
-//         app_usbd_ep_transfer(NRF_DRV_USBD_EPIN1, &transfer);
-//         return true;  
-//     } 
-//     return false; 
-// }
+
 
 
 /**
@@ -515,7 +504,7 @@ static ret_code_t midi_endpoint_ev(app_usbd_class_inst_t const *  p_inst,
                 ret = app_fifo_read(p_midi->specific.inst.p_fifo_in, p_data, &size);
                 if (size) {
                     NRF_DRV_USBD_TRANSFER_IN(transfer, p_data, 4);
-                    NRF_LOG_INFO("err done thread: %d", app_usbd_ep_transfer(NRF_DRV_USBD_EPIN1, &transfer));                
+                    app_usbd_ep_transfer(NRF_DRV_USBD_EPIN1, &transfer);                
                 } else {
                     p_midi_ctx->sending = false;
                 }
@@ -746,7 +735,7 @@ ret_code_t app_usbd_midi_write(app_usbd_midi_t const * p_midi,
         memcpy(p_data, p_buf, 4);
         p_midi_ctx->sending = true;
         NRF_DRV_USBD_TRANSFER_IN(transfer, p_data,4);
-        NRF_LOG_INFO("err send thread: %d", app_usbd_ep_transfer(NRF_DRV_USBD_EPIN1, &transfer));
+        app_usbd_ep_transfer(NRF_DRV_USBD_EPIN1, &transfer);
     }  
 
     // #if (APP_USBD_CONFIG_EVENT_QUEUE_ENABLE == 0)
