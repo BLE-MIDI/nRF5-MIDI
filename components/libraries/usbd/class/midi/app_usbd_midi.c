@@ -111,8 +111,6 @@ static inline void user_event_handler(
     }
 }
 
-uint8_t fifo_buf_in[64];
-
 /**
  * @brief Select interface.
  *
@@ -159,7 +157,9 @@ static ret_code_t iface_select(
                 }
                 if (ep_addr == NRF_DRV_USBD_EPIN1)
                 {
-                    app_fifo_init(p_midi->specific.inst.p_fifo_in, fifo_buf_in, 64);
+                    app_fifo_init(p_midi->specific.inst.p_fifo_in, 
+                                  p_midi->specific.inst.p_in_buf, 
+                                  p_midi->specific.inst.in_buf_size);
                 }
             }
             else
@@ -475,9 +475,6 @@ static inline nrf_drv_usbd_ep_t ep_in_addr_get(app_usbd_class_inst_t const * p_i
     return app_usbd_class_ep_address_get(ep_cfg);
 }
 
-
-
-
 /**
  * @brief Class specific endpoint transfer handler.
  *
@@ -715,15 +712,15 @@ ret_code_t app_usbd_midi_get(app_usbd_midi_t const * p_midi,
     return app_usbd_ep_transfer(ep, &rx_transfer);
 }
 
-ret_code_t app_usbd_midi_write(app_usbd_midi_t const * p_midi,
+ret_code_t app_usbd_midi_send(app_usbd_midi_t const * p_midi,
                                   const void *         p_buf)
 {
     app_usbd_midi_ctx_t * p_midi_ctx = midi_ctx_get(p_midi);
     app_fifo_t * p_fifo_in = p_midi->specific.inst.p_fifo_in;
 
-    // #if (APP_USBD_CONFIG_EVENT_QUEUE_ENABLE == 0)
+    #if (APP_USBD_CONFIG_EVENT_QUEUE_ENABLE == 0)
     CRITICAL_REGION_ENTER();
-    // #endif // (APP_USBD_CONFIG_EVENT_QUEUE_ENABLE == 0)
+    #endif // (APP_USBD_CONFIG_EVENT_QUEUE_ENABLE == 0)
     
     uint32_t len = 4;
 
@@ -738,14 +735,84 @@ ret_code_t app_usbd_midi_write(app_usbd_midi_t const * p_midi,
         app_usbd_ep_transfer(NRF_DRV_USBD_EPIN1, &transfer);
     }  
 
-    // #if (APP_USBD_CONFIG_EVENT_QUEUE_ENABLE == 0)
+    #if (APP_USBD_CONFIG_EVENT_QUEUE_ENABLE == 0)
     CRITICAL_REGION_EXIT();
-    // #endif // (APP_USBD_CONFIG_EVENT_QUEUE_ENABLE == 0)
+    #endif // (APP_USBD_CONFIG_EVENT_QUEUE_ENABLE == 0)
 
-    
     return NRF_SUCCESS;
-
 }
+
+ret_code_t app_usbd_midi_write(app_usbd_midi_t const *  p_midi,
+                               uint8_t                  cable_number, 
+                               uint8_t *                p_buf,
+                               uint32_t                 len)
+{
+    uint8_t status = *p_buf;
+    uint8_t code_index_number;
+    uint8_t m_tx_buffer[4];
+
+    /** "System Exclusive"- and "Single byte System Common"-message */
+    if ((status == 0b11110000) || (status >> 2) == 0b111101) {
+        uint8_t pos = 0;
+        while (pos < len) {
+            uint8_t left_to_send =  (len - pos);
+            for (size_t i = 0; i < left_to_send; i++)
+            {
+                m_tx_buffer[i+1] = *(p_buf + pos);
+                pos ++;
+                if (i == 2) {
+                    break;
+                }
+            }
+
+            if (left_to_send > 3) 
+            {
+                code_index_number = 0x4;
+            } 
+            else if (left_to_send == 3) 
+            {
+                code_index_number = 0x7;
+            } 
+            else if (left_to_send == 2) 
+            {
+                code_index_number = 0x6;
+                m_tx_buffer[3] = 0;
+            } 
+            else 
+            {
+                code_index_number = 0x5;
+                m_tx_buffer[2] = 0;
+                m_tx_buffer[3] = 0;
+            }
+
+            m_tx_buffer[0] = (cable_number << 4) + code_index_number;
+            app_usbd_midi_send(p_midi, m_tx_buffer);
+        }
+        return NRF_SUCCESS;
+    }
+
+    if (len > 3) {
+        return NRF_ERROR_INVALID_DATA;
+    }
+
+    if (status >> 5 == 0b110) {
+        code_index_number = 0x2;
+    } else if (status == 0b11110010) {
+        code_index_number = 0x3;
+    } else {
+        code_index_number = status >> 4;
+    }
+
+    m_tx_buffer[0] = (cable_number << 4) + code_index_number;
+    for (size_t i = 0; i < len; i++)
+    {
+        m_tx_buffer[i+1] = *(p_buf + i);
+    }
+
+    return app_usbd_midi_send(p_midi, m_tx_buffer);
+}
+
+
 
 #endif //NRF_MODULE_ENABLED(APP_USBD_AUDIO)
 

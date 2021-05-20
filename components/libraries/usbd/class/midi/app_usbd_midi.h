@@ -127,11 +127,13 @@ typedef enum app_usbd_midi_user_event_e {
                                   interfaces_configs,       \
                                   user_ev_handler,          \
                                   midi_descriptor,          \
+                                  in_buf_size,              \
                                   out_buf_size)             \
     APP_USBD_MIDI_GLOBAL_DEF_INTERNAL(instance_name,        \
                                        interfaces_configs,  \
                                        user_ev_handler,     \
                                        midi_descriptor,     \
+                                       in_buf_size,         \
                                        out_buf_size)        \
 
 /**
@@ -187,10 +189,14 @@ ret_code_t app_usbd_midi_get(app_usbd_midi_t const * p_midi,
 
 /**
  * @brief Write midi data to TX buffer and start sending.
+ * 
+ * Data has to be a single, complete midi message in order for transfer to be correctly formatted.
  *
  */
-ret_code_t app_usbd_midi_write(app_usbd_midi_t const * p_midi,
-                                  const void *         p_buf);
+ret_code_t app_usbd_midi_write(app_usbd_midi_t const *  p_midi,
+                               uint8_t                  cable_number, 
+                               uint8_t *                p_buf,
+                               uint32_t                 len);
 
 
 /** @} */
