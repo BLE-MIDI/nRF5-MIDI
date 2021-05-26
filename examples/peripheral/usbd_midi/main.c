@@ -87,7 +87,7 @@
  * @brief USB Midi buffer size
  */
 #define RX_BUFFER_SIZE 256
-#define TX_BUFFER_SIZE 256
+#define TX_BUFFER_SIZE 2048
 
 
 /**
@@ -98,6 +98,8 @@
 #ifndef USBD_POWER_DETECTION
 #define USBD_POWER_DETECTION true
 #endif
+
+APP_TIMER_DEF(midi_timer);
 
 /**
  * @brief Midi class user event handler
@@ -165,6 +167,8 @@ static void midi_user_ev_handler(app_usbd_class_inst_t const * p_inst,
             bsp_board_led_on(LED_MIDI_OPEN);
             ret_code_t ret = bsp_buttons_enable();
             APP_ERROR_CHECK(ret);
+
+            app_timer_start(midi_timer, APP_TIMER_TICKS(2), NULL);
 
             break;
         }
@@ -292,9 +296,42 @@ static void init_bsp(void)
 }
 
 
+
+void timer_midi_event_handler(void* p_context)
+{
+    uint8_t message[3] = {0xB0, 48, 48};
+
+    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
+    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
+    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
+    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
+    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
+    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
+    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
+    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
+    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
+    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
+    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
+    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
+    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
+    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
+    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
+    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
+}
+
+void init_timer(void) 
+{
+    app_timer_create(&midi_timer,
+                            APP_TIMER_MODE_REPEATED,
+                            timer_midi_event_handler);
+}
+
+
 int main(void)
 {
     ret_code_t ret;
+
+
     static const app_usbd_config_t usbd_config = {
         .ev_state_proc = usbd_user_ev_handler,
         .enable_sof = false
@@ -321,6 +358,8 @@ int main(void)
 
     // Initialize LEDs and buttons
     init_bsp();
+
+    init_timer(); 
 
     ret = app_usbd_init(&usbd_config);
     APP_ERROR_CHECK(ret);

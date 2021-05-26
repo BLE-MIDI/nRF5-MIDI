@@ -103,12 +103,11 @@ typedef struct {
     uint16_t ep_size;                                       //!< Endpoint size
 
     app_usbd_audio_subclass_t type_streaming;               //!< Streaming type MIDISTREAMING/AUDIOSTREAMING (@ref app_usbd_midi_subclass_t)
-    app_fifo_t * p_fifo_in;                                 //!< FIFO in
-    uint8_t *p_in_buf;
-    uint16_t in_buf_size;
+    nrf_ringbuf_t const * p_in_buf;                        //!< Out queue
     nrf_ringbuf_t const * p_out_buf;                        //!< Out queue
     app_usbd_midi_user_ev_handler_t user_ev_handler;        //!< User event handler
 } app_usbd_midi_inst_t;
+
 
 /**
  * @brief Midi class context.
@@ -163,20 +162,19 @@ typedef struct {
                                     midi_descriptor,                \
                                     ep_siz,                         \
                                     type_str,                       \
-                                    p_fifo,                         \
-                                    tx_buf,                         \
-                                    tx_buf_size,                    \
+                                    in_buf,                         \
                                     out_buf)                        \
     .inst = {                                                       \
          .user_ev_handler = user_event_handler,                     \
          .p_midi_dsc      = midi_descriptor,                        \
          .ep_size         = ep_siz,                                 \
          .type_streaming  = type_str,                               \
-         .p_fifo_in       = p_fifo,                                 \
-         .p_in_buf        = tx_buf,                                 \
-         .in_buf_size     = tx_buf_size,                            \
+         .p_in_buf        = in_buf,                                 \
          .p_out_buf       = out_buf,                                \
     }
+
+
+
 
 /**
  * @brief Specific class data for midi class.
@@ -203,8 +201,7 @@ extern const app_usbd_class_methods_t app_usbd_midi_class_methods;
                                     in_buf_size,                    \
                                     out_buf_size)                   \
     NRF_RINGBUF_DEF(instance_name##_buf_out, out_buf_size);         \
-    uint8_t tx_buf[in_buf_size];                                    \
-    app_fifo_t instance_name##_fifo_in;                             \
+    NRF_RINGBUF_DEF(instance_name##_buf_in, in_buf_size);           \
     APP_USBD_CLASS_INST_GLOBAL_DEF(                                 \
         instance_name,                                              \
         app_usbd_midi,                                              \
@@ -214,9 +211,7 @@ extern const app_usbd_class_methods_t app_usbd_midi_class_methods;
                                     midi_descriptor,                \
                                     0,                              \
                                     APP_USBD_AUDIO_SUBCLASS_MIDISTREAMING, \
-                                    &instance_name##_fifo_in,       \
-                                    tx_buf,                         \
-                                    in_buf_size,                    \
+                                    &instance_name##_buf_in,            \
                                     &instance_name##_buf_out))      \
     )
 

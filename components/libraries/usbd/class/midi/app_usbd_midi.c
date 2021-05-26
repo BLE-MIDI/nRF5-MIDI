@@ -157,9 +157,7 @@ static ret_code_t iface_select(
                 }
                 if (ep_addr == NRF_DRV_USBD_EPIN1)
                 {
-                    app_fifo_init(p_midi->specific.inst.p_fifo_in, 
-                                  p_midi->specific.inst.p_in_buf, 
-                                  p_midi->specific.inst.in_buf_size);
+                    nrf_ringbuf_init(p_midi->specific.inst.p_in_buf);
                 }
             }
             else
@@ -490,17 +488,18 @@ static ret_code_t midi_endpoint_ev(app_usbd_class_inst_t const *  p_inst,
     app_usbd_midi_ctx_t * p_midi_ctx = midi_ctx_get(p_midi);
     ret_code_t ret = NRF_ERROR_NOT_SUPPORTED;
     size_t len = 4;
+    uint8_t * p_buffer;
     if (NRF_USBD_EPIN_CHECK(p_event->drv_evt.data.eptransfer.ep))
     {
-        uint8_t p_data[4];
-        uint32_t size = 4;
         switch (p_event->drv_evt.data.eptransfer.status)
         {
             case NRF_USBD_EP_OK:
-            
-                ret = app_fifo_read(p_midi->specific.inst.p_fifo_in, p_data, &size);
-                if (size) {
-                    NRF_DRV_USBD_TRANSFER_IN(transfer, p_data, 4);
+                ret = nrf_ringbuf_free(p_midi->specific.inst.p_in_buf, 4);
+                ret = nrf_ringbuf_get(p_midi->specific.inst.p_in_buf, 
+                &p_buffer, &len, true);
+                
+                if (len) {
+                    NRF_DRV_USBD_TRANSFER_IN(transfer, p_buffer, 4);
                     app_usbd_ep_transfer(NRF_DRV_USBD_EPIN1, &transfer);                
                 } else {
                     p_midi_ctx->sending = false;
@@ -716,24 +715,27 @@ ret_code_t app_usbd_midi_send(app_usbd_midi_t const * p_midi,
                                   const void *         p_buf)
 {
     app_usbd_midi_ctx_t * p_midi_ctx = midi_ctx_get(p_midi);
-    app_fifo_t * p_fifo_in = p_midi->specific.inst.p_fifo_in;
+    size_t len = 4;
+    uint8_t * p_buffer;
 
     #if (APP_USBD_CONFIG_EVENT_QUEUE_ENABLE == 0)
     CRITICAL_REGION_ENTER();
     #endif // (APP_USBD_CONFIG_EVENT_QUEUE_ENABLE == 0)
-    
-    uint32_t len = 4;
 
-    
-    if(p_midi_ctx->sending) {
-        app_fifo_write(p_fifo_in, p_buf, &len);
-    } else {
-        uint8_t p_data[4];
-        memcpy(p_data, p_buf, 4);
+    nrf_ringbuf_cpy_put(p_midi->specific.inst.p_in_buf, p_buf, &len);
+
+
+    if(!p_midi_ctx->sending) {
         p_midi_ctx->sending = true;
-        NRF_DRV_USBD_TRANSFER_IN(transfer, p_data,4);
-        app_usbd_ep_transfer(NRF_DRV_USBD_EPIN1, &transfer);
+        nrf_ringbuf_get(p_midi->specific.inst.p_in_buf, 
+        &p_buffer, &len, true);
+        if (len) {
+            NRF_DRV_USBD_TRANSFER_IN(transfer, p_buffer, 4);
+            app_usbd_ep_transfer(NRF_DRV_USBD_EPIN1, &transfer);                
+        }
     }  
+
+
 
     #if (APP_USBD_CONFIG_EVENT_QUEUE_ENABLE == 0)
     CRITICAL_REGION_EXIT();
