@@ -65,7 +65,6 @@
 static uint8_t m_rx_buffer[USBD_MIDI_EVENT_SIZE];
 NRF_DRV_USBD_TRANSFER_OUT(rx_transfer, m_rx_buffer, USBD_MIDI_EVENT_SIZE);
 
-
 /**
  * @brief Auxiliary function to access midi class instance data.
  *
@@ -112,6 +111,48 @@ static inline void user_event_handler(
 }
 
 /**
+ * @brief User event handler.
+ *
+ * @param[in] p_inst        Class instance.
+ * @param[in] event user    Event type @ref app_usbd_midi_user_event_t
+ */
+static inline void user_rx_handler(app_usbd_class_inst_t const * p_inst,
+                                        enum app_usbd_midi_rx_event_e event,
+                                        uint8_t cable,
+                                        app_usbd_midi_msg_t *rx)
+{
+    app_usbd_midi_t const * p_midi = midi_get(p_inst);
+
+    if (p_midi->specific.inst.user_rx_handler != NULL)
+    {
+        p_midi->specific.inst.user_rx_handler(p_inst, event, cable, rx);
+    }
+}
+
+static bool midi_consumer(nrf_drv_usbd_ep_transfer_t * p_next,
+                             void *                       p_context,
+                             size_t                       ep_size,
+                             size_t                       data_size)
+{
+    app_usbd_midi_ctx_t  * p_midi_ctx = (app_usbd_midi_ctx_t *) p_context;
+    
+    p_next->size = data_size;
+    static uint8_t buffer = 0;
+
+    p_midi_ctx->rx_buf = buffer;
+    p_next->p_data.rx = p_midi_ctx->rx_transfer[buffer].data;
+    p_midi_ctx->rx_transfer[buffer].len = data_size;
+
+    if (buffer == 0) {
+        buffer = 1;
+    } else {
+        buffer = 0;
+    }
+
+    return false;
+}
+
+/**
  * @brief Select interface.
  *
  * @param[in,out] p_inst    Instance of the class.
@@ -126,7 +167,6 @@ static ret_code_t iface_select(
     app_usbd_class_iface_conf_t const * p_iface = app_usbd_class_iface_get(p_inst, iface_idx);
     /* Simple check if this is data interface */
     uint8_t const ep_count = app_usbd_class_iface_ep_count_get(p_iface);
-
 
     if (ep_count > 0)
     {
@@ -149,8 +189,13 @@ static ret_code_t iface_select(
                 app_usbd_ep_enable(ep_addr);
                 if (ep_addr == NRF_DRV_USBD_EPOUT1)
                 {
-                    nrf_ringbuf_init(p_midi->specific.inst.p_out_buf);
-                    app_usbd_ep_transfer(NRF_DRV_USBD_EPOUT1, &rx_transfer);
+                    nrf_drv_usbd_handler_desc_t handler_desc = {
+                        .handler.consumer = midi_consumer,
+                        .p_context        = p_midi_ctx
+                    };
+
+                    app_usbd_ep_handled_transfer(NRF_DRV_USBD_EPOUT1, &handler_desc);
+
 
                     user_event_handler(p_inst,
                         APP_USBD_MIDI_USER_EVT_PORT_OPEN);
@@ -473,6 +518,24 @@ static inline nrf_drv_usbd_ep_t ep_in_addr_get(app_usbd_class_inst_t const * p_i
     return app_usbd_class_ep_address_get(ep_cfg);
 }
 
+
+size_t midi_buffer_get(app_usbd_midi_t const *p_midi, uint8_t **p_buf)
+{
+    size_t len = 4;
+    size_t len_total = 0;
+    uint8_t buf[64];
+    while ((len != 0) && (len_total < 64))
+    {
+        nrf_ringbuf_cpy_get(p_midi->specific.inst.p_in_buf, 
+        (buf + len_total), &len);
+
+        len_total += len;
+    }
+    *p_buf = buf;
+    return len_total;
+    
+}
+
 /**
  * @brief Class specific endpoint transfer handler.
  *
@@ -482,30 +545,43 @@ static inline nrf_drv_usbd_ep_t ep_in_addr_get(app_usbd_class_inst_t const * p_i
  * @return Standard error code.
  */
 static ret_code_t midi_endpoint_ev(app_usbd_class_inst_t const *  p_inst,
-                                      app_usbd_complex_evt_t const * p_event)
+                                   app_usbd_complex_evt_t const * p_event)
 {
     app_usbd_midi_t const * p_midi     = midi_get(p_inst);
     app_usbd_midi_ctx_t * p_midi_ctx = midi_ctx_get(p_midi);
     ret_code_t ret = NRF_ERROR_NOT_SUPPORTED;
-    size_t len = 4;
-    uint8_t * p_buffer;
+
+
     if (NRF_USBD_EPIN_CHECK(p_event->drv_evt.data.eptransfer.ep))
     {
         switch (p_event->drv_evt.data.eptransfer.status)
         {
             case NRF_USBD_EP_OK:
-                ret = nrf_ringbuf_free(p_midi->specific.inst.p_in_buf, 4);
-                ret = nrf_ringbuf_get(p_midi->specific.inst.p_in_buf, 
-                &p_buffer, &len, true);
-                
-                if (len) {
-                    NRF_DRV_USBD_TRANSFER_IN(transfer, p_buffer, 4);
+            {
+                size_t len = 4;
+                size_t len_total = 0;
+                uint8_t p_buffer[64];
+
+                while ((len != 0) && (len_total < 64))
+                {
+                    nrf_ringbuf_cpy_get(p_midi->specific.inst.p_in_buf, 
+                    (p_buffer + len_total), &len);
+
+                    len_total += len;
+                }
+
+                if (len_total) {
+                    NRF_DRV_USBD_TRANSFER_IN(transfer, p_buffer, len_total);
                     app_usbd_ep_transfer(NRF_DRV_USBD_EPIN1, &transfer);                
                 } else {
                     p_midi_ctx->sending = false;
                 }
+
                 user_event_handler(p_inst, APP_USBD_MIDI_USER_EVT_TX_DONE);
                 return NRF_SUCCESS;
+            }
+
+                
             case NRF_USBD_EP_ABORTED:
                 return NRF_SUCCESS;
             default:
@@ -518,14 +594,116 @@ static ret_code_t midi_endpoint_ev(app_usbd_class_inst_t const *  p_inst,
         switch (p_event->drv_evt.data.eptransfer.status)
         {
             case NRF_USBD_EP_OK:
-                nrf_ringbuf_cpy_put(p_midi->specific.inst.p_out_buf, 
-                                    m_rx_buffer, &len);
-              
-                app_usbd_ep_transfer(NRF_DRV_USBD_EPOUT1, &rx_transfer);
-                
-                user_event_handler(p_inst, APP_USBD_MIDI_USER_EVT_RX_DONE);
+            {   
+                uint8_t *buf;
+                uint8_t *buf_temp;
+                uint8_t len;
+                uint8_t cin;
+                uint8_t cable;
+                app_usbd_midi_msg_t msg;
 
+                nrf_drv_usbd_handler_desc_t handler_desc = {
+                    .handler.consumer = midi_consumer,
+                    .p_context        = p_midi_ctx
+                };
+
+                buf_temp = p_midi_ctx->rx_transfer[p_midi_ctx->rx_buf].data;
+                len = p_midi_ctx->rx_transfer[p_midi_ctx->rx_buf].len;
+                app_usbd_ep_handled_transfer(NRF_DRV_USBD_EPOUT1, &handler_desc);
+
+                for (size_t i = 0; i < len; i += 4)
+                {
+                    buf = buf_temp + i;
+                    cin = (*buf) & 0xF;
+                    cable = (*buf) >> 4;
+
+                    switch (cin)
+                    {
+                    case 0x4:
+                    {
+                        msg.p_data = p_midi_ctx->sysex[cable].p_data,
+                        msg.len = p_midi_ctx->sysex[cable].pos;
+                        
+                        if (((p_midi_ctx->sysex[cable].left < 3) && msg.p_data != NULL) || 
+                            (*(buf + 1) == 0xF0 && msg.p_data == NULL)) 
+                        {
+                            user_rx_handler(p_inst,
+                                    APP_USBD_MIDI_SYSEX_BUF_REQ,
+                                    cable, 
+                                    &msg);
+  
+                            p_midi_ctx->sysex[cable].pos = 0;
+                            p_midi_ctx->sysex[cable].left = msg.len;
+                            p_midi_ctx->sysex[cable].p_data = msg.p_data;
+                        }
+
+                        if (p_midi_ctx->sysex[cable].p_data != NULL)
+                        {
+                            memcpy(p_midi_ctx->sysex[cable].p_data + p_midi_ctx->sysex[cable].pos, buf + 1, 3); 
+                            p_midi_ctx->sysex[cable].pos += 3;
+                            p_midi_ctx->sysex[cable].left -= 3;
+                        }
+                        break;
+                    }
+                    case 0x5:
+                        if (*(buf + 1) == 0xF6)
+                        {
+                            msg.p_data = buf + 1;
+                            msg.len = 1;
+                            user_rx_handler(p_inst, APP_USBD_MIDI_RX_DONE, cable, &msg);
+                            break;
+                        }
+                    case 0x6:
+                    case 0x7:
+                        if (p_midi_ctx->sysex[cable].left < cin-4 && p_midi_ctx->sysex[cable].p_data != NULL) 
+                        {
+                            msg.p_data = p_midi_ctx->sysex[cable].p_data,
+                            msg.len = p_midi_ctx->sysex[cable].pos;
+
+                            user_rx_handler(p_inst, APP_USBD_MIDI_SYSEX_BUF_REQ, cable, &msg);
+
+                            p_midi_ctx->sysex[cable].pos = 0;
+                            p_midi_ctx->sysex[cable].left = msg.len;
+                            p_midi_ctx->sysex[cable].p_data = msg.p_data;
+                        }
+
+                        if (p_midi_ctx->sysex[cable].p_data != NULL)
+                        {
+                            memcpy(p_midi_ctx->sysex[cable].p_data + p_midi_ctx->sysex[cable].pos, buf + 1, cin-4);
+                            p_midi_ctx->sysex[cable].pos += cin-4;
+
+                            msg.p_data = p_midi_ctx->sysex[cable].p_data,
+                            msg.len = p_midi_ctx->sysex[cable].pos;
+
+                            user_rx_handler(p_inst, APP_USBD_MIDI_SYSEX_RX_DONE, cable, &msg);
+
+                            p_midi_ctx->sysex[cable].pos = 0;
+                            p_midi_ctx->sysex[cable].left = 0;
+                            p_midi_ctx->sysex[cable].p_data = NULL;
+                        }
+                        break;
+                    case 0xF:
+                        msg.p_data = buf + 1;
+                        msg.len = 1;
+                        user_rx_handler(p_inst, APP_USBD_MIDI_RX_DONE, cable, &msg);
+                        break;
+                    case 0x2:
+                    case 0xC:
+                    case 0xD:
+                        msg.p_data = buf + 1;
+                        msg.len = 2;
+                        user_rx_handler(p_inst, APP_USBD_MIDI_RX_DONE, cable, &msg);
+                        break;
+                    default:
+                        msg.p_data = buf + 1;
+                        msg.len = 3;
+                        user_rx_handler(p_inst, APP_USBD_MIDI_RX_DONE, cable, &msg);
+                        break;
+                    }
+                }
                 return NRF_SUCCESS;
+                
+            }
             case NRF_USBD_EP_WAITING:
             case NRF_USBD_EP_ABORTED:
                 return NRF_SUCCESS;
@@ -684,8 +862,6 @@ static bool midi_feed_descriptors(app_usbd_class_descriptor_ctx_t * p_ctx,
     APP_USBD_CLASS_DESCRIPTOR_END();
 }
 
-/** @} */
-
 const app_usbd_class_methods_t app_usbd_midi_class_methods = {
     .event_handler       = midi_event_handler,
     .feed_descriptors    = midi_feed_descriptors,
@@ -694,29 +870,11 @@ const app_usbd_class_methods_t app_usbd_midi_class_methods = {
     .iface_selection_get = iface_selection_get,
 };
 
-ret_code_t app_usbd_midi_get(app_usbd_midi_t const * p_midi,
-                              uint8_t *              p_buf)
-{
-    ASSERT(p_buf != NULL);
-
-    size_t len = 4;
-    nrf_ringbuf_cpy_get(p_midi->specific.inst.p_out_buf, p_buf, &len);
-    if (!len) {
-        return NRF_ERROR_IO_PENDING;  
-    } 
-    return NRF_SUCCESS; 
-
-    NRF_DRV_USBD_TRANSFER_OUT(rx_transfer, p_buf, 4);
-    nrf_drv_usbd_ep_t ep = ep_out_addr_get(app_usbd_midi_class_inst_get(p_midi));
-    return app_usbd_ep_transfer(ep, &rx_transfer);
-}
-
-ret_code_t app_usbd_midi_send(app_usbd_midi_t const * p_midi,
-                                  const void *         p_buf)
+ret_code_t app_usbd_midi_send_raw(app_usbd_midi_t const * p_midi,
+                                  const void *        p_buf,
+                                  size_t              len)
 {
     app_usbd_midi_ctx_t * p_midi_ctx = midi_ctx_get(p_midi);
-    size_t len = 4;
-    uint8_t * p_buffer;
 
     #if (APP_USBD_CONFIG_EVENT_QUEUE_ENABLE == 0)
     CRITICAL_REGION_ENTER();
@@ -724,18 +882,31 @@ ret_code_t app_usbd_midi_send(app_usbd_midi_t const * p_midi,
 
     nrf_ringbuf_cpy_put(p_midi->specific.inst.p_in_buf, p_buf, &len);
 
-
-    if(!p_midi_ctx->sending) {
+    if(!p_midi_ctx->sending) 
+    {
         p_midi_ctx->sending = true;
-        nrf_ringbuf_get(p_midi->specific.inst.p_in_buf, 
-        &p_buffer, &len, true);
-        if (len) {
-            NRF_DRV_USBD_TRANSFER_IN(transfer, p_buffer, 4);
-            app_usbd_ep_transfer(NRF_DRV_USBD_EPIN1, &transfer);                
+        len = 4;
+        size_t len_total = 0;
+        uint8_t p_buffer[64];
+        
+        while ((len != 0) && (len_total < 64))
+        {
+            nrf_ringbuf_cpy_get(p_midi->specific.inst.p_in_buf, 
+            (p_buffer + len_total), &len);
+
+            len_total += len;
+        }
+
+        if (len_total) 
+        {
+            NRF_DRV_USBD_TRANSFER_IN(transfer, p_buffer, len_total);
+            app_usbd_ep_transfer(NRF_DRV_USBD_EPIN1, &transfer);        
+        } 
+        else 
+        {
+            p_midi_ctx->sending = false;
         }
     }  
-
-
 
     #if (APP_USBD_CONFIG_EVENT_QUEUE_ENABLE == 0)
     CRITICAL_REGION_EXIT();
@@ -745,76 +916,84 @@ ret_code_t app_usbd_midi_send(app_usbd_midi_t const * p_midi,
 }
 
 ret_code_t app_usbd_midi_write(app_usbd_midi_t const *  p_midi,
-                               uint8_t                  cable_number, 
+                               uint8_t                  cable, 
                                uint8_t *                p_buf,
-                               uint32_t                 len)
+                               size_t                   len)
 {
     uint8_t status = *p_buf;
-    uint8_t code_index_number;
+    uint8_t cin;
     uint8_t m_tx_buffer[4];
-
-    /** "System Exclusive"- and "Single byte System Common"-message */
-    if ((status == 0b11110000) || (status >> 2) == 0b111101) {
-        uint8_t pos = 0;
-        while (pos < len) {
-            uint8_t left_to_send =  (len - pos);
-            for (size_t i = 0; i < left_to_send; i++)
-            {
-                m_tx_buffer[i+1] = *(p_buf + pos);
-                pos ++;
-                if (i == 2) {
-                    break;
-                }
-            }
-
-            if (left_to_send > 3) 
-            {
-                code_index_number = 0x4;
-            } 
-            else if (left_to_send == 3) 
-            {
-                code_index_number = 0x7;
-            } 
-            else if (left_to_send == 2) 
-            {
-                code_index_number = 0x6;
-                m_tx_buffer[3] = 0;
-            } 
-            else 
-            {
-                code_index_number = 0x5;
-                m_tx_buffer[2] = 0;
-                m_tx_buffer[3] = 0;
-            }
-
-            m_tx_buffer[0] = (cable_number << 4) + code_index_number;
-            app_usbd_midi_send(p_midi, m_tx_buffer);
-        }
-        return NRF_SUCCESS;
-    }
 
     if (len > 3) {
         return NRF_ERROR_INVALID_DATA;
     }
 
-    if (status >> 5 == 0b110) {
-        code_index_number = 0x2;
-    } else if (status == 0b11110010) {
-        code_index_number = 0x3;
-    } else {
-        code_index_number = status >> 4;
+    if (status >> 5 == 0b110) 
+    {
+        cin = 0x2;
+    } 
+    else if (status == 0b11110010) 
+    {
+        cin = 0x3;
+    } 
+    else if ((status >> 2) == 0b111101) 
+    {
+       cin = 0x5;
+    }
+    else 
+    {
+        cin = status >> 4;
     }
 
-    m_tx_buffer[0] = (cable_number << 4) + code_index_number;
+    m_tx_buffer[0] = (cable << 4) + cin;
     for (size_t i = 0; i < len; i++)
     {
         m_tx_buffer[i+1] = *(p_buf + i);
     }
 
-    return app_usbd_midi_send(p_midi, m_tx_buffer);
+    return app_usbd_midi_send_raw(p_midi, m_tx_buffer, 4);
 }
 
+ret_code_t app_usbd_midi_sysex_write(app_usbd_midi_t const *  p_midi,
+                               uint8_t                  cable, 
+                               uint8_t *                p_buf,
+                               size_t                   len)
+{
+    uint8_t sysex_buf[64];
+    size_t sysex_pos = 0;
+    size_t pos = 0;
+    uint8_t left_to_send = 0;
 
+    while (pos < len)
+    {
+        left_to_send =  (len - pos);
+        
+        if (left_to_send > 3) 
+        {
+            sysex_buf[sysex_pos] = 0x4;
+        } 
+        else 
+        {
+            sysex_buf[sysex_pos] = 4 + left_to_send;
+        }
+        sysex_pos++;
+        for (size_t i = 0; i < left_to_send; i++)
+        {
+            sysex_buf[sysex_pos] = *(p_buf + pos);
+            pos ++;
+            sysex_pos ++;
+            
+            if(i == 2) 
+            {
+                break;
+            }
+        }
+    }
+    sysex_pos += 3-left_to_send;
+    return app_usbd_midi_send_raw(p_midi, sysex_buf, sysex_pos);
+}
+
+/** @} */
 
 #endif //NRF_MODULE_ENABLED(APP_USBD_AUDIO)
 

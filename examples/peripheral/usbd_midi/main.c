@@ -86,10 +86,10 @@
 /**
  * @brief USB Midi buffer size
  */
-#define RX_BUFFER_SIZE 256
 #define TX_BUFFER_SIZE 2048
+#define SYSEX_BUF_SIZE 74
 
-
+uint8_t m_sysex_buf[SYSEX_BUF_SIZE];
 /**
  * @brief Enable power USB detection
  *
@@ -99,15 +99,17 @@
 #define USBD_POWER_DETECTION true
 #endif
 
-APP_TIMER_DEF(midi_timer);
-
 /**
  * @brief Midi class user event handler
  */
 
 static void midi_user_ev_handler(app_usbd_class_inst_t const * p_inst,
-                                      app_usbd_midi_user_event_t   event);
+                                    app_usbd_midi_user_event_t   event);
 
+static void midi_user_rx_handler(app_usbd_class_inst_t const * p_inst,
+                                    enum app_usbd_midi_rx_event_e event,
+                                    uint8_t cable,
+                                    app_usbd_midi_msg_t *rx);
 
 
 /**
@@ -133,42 +135,85 @@ APP_USBD_MIDI_DESCRIPTOR(m_midi_desc,
 
 /*lint -save -e26 -e64 -e123 -e505 -e651*/
 
-
-
 /**
  * @brief Midi class instance
  */
 APP_USBD_MIDI_GLOBAL_DEF(m_app_midi,
                           MIDI_INTERFACES_CONFIG(),
                           midi_user_ev_handler,
+                          midi_user_rx_handler,
                           &m_midi_desc,
-                          TX_BUFFER_SIZE,
-                          RX_BUFFER_SIZE
+                          TX_BUFFER_SIZE
 );
 
-
 /*lint -restore*/
+static void midi_user_rx_handler(app_usbd_class_inst_t const * p_inst,
+                                    enum app_usbd_midi_rx_event_e event,
+                                    uint8_t cable,
+                                    app_usbd_midi_msg_t *rx)
+    {
+    switch (event)
+    {
+    case APP_USBD_MIDI_SYSEX_BUF_REQ:
+        {
+            if (rx->p_data == NULL) 
+            {
+                /* requesting buffer for new sysex message */
 
+                size_t len = SYSEX_BUF_SIZE;
+                rx->p_data = m_sysex_buf;
+                rx->len = len;
+            }
+            else
+            {
+                /* requesting new buffer because current buffer is full */
+
+                // app_usbd_midi_sysex_write(&m_app_midi, 0, rx->p_data, rx->len);
+                // NRF_LOG_HEXDUMP_INFO(rx->p_data, rx->len);
+
+                size_t len = SYSEX_BUF_SIZE;
+                rx->p_data = m_sysex_buf;
+                rx->len = len;
+            }
+            return;
+        }
+    case APP_USBD_MIDI_SYSEX_RX_DONE:
+        /* sysex message is completed */
+
+        // app_usbd_midi_sysex_write(&m_app_midi, 0, rx->p_data, rx->len);
+        // NRF_LOG_HEXDUMP_INFO(rx->p_data, rx->len);
+
+        bsp_board_led_invert(LED_MIDI_RX);
+        break;
+    case APP_USBD_MIDI_RX_DONE:
+        /* received midi message */
+
+        app_usbd_midi_write(&m_app_midi, 0, rx->p_data, rx->len);
+        // NRF_LOG_HEXDUMP_INFO(rx->p_data, rx->len);
+
+        bsp_board_led_invert(LED_MIDI_RX);
+        return;
+    default:
+        return;
+    }
+}
 
 /**
- * @brief User event handler @ref app_usbd_midi_user_ev_handler_t 
+ * @brief User event handler @ref app_usbd_midi_user_ev_handler_t
  * */
 static void midi_user_ev_handler(app_usbd_class_inst_t const * p_inst,
                                     app_usbd_midi_user_event_t event)
 {
-    // app_usbd_midi_t const * p_midi = app_usbd_midi_class_get(p_inst);
     switch (event)
     {
         case APP_USBD_MIDI_USER_EVT_CLASS_REQ:
             break;
         case APP_USBD_MIDI_USER_EVT_PORT_OPEN:
         {
-            NRF_LOG_INFO("Midi port opened");
+            NRF_LOG_INFO("MIDI port opened");
             bsp_board_led_on(LED_MIDI_OPEN);
             ret_code_t ret = bsp_buttons_enable();
             APP_ERROR_CHECK(ret);
-
-            app_timer_start(midi_timer, APP_TIMER_TICKS(2), NULL);
 
             break;
         }
@@ -177,20 +222,7 @@ static void midi_user_ev_handler(app_usbd_class_inst_t const * p_inst,
         case APP_USBD_MIDI_USER_EVT_TX_DONE:
             bsp_board_led_invert(LED_MIDI_TX);
             break;
-        case APP_USBD_MIDI_USER_EVT_RX_DONE:
-        {
-            uint8_t m_rx_buffer[4];
-            ret_code_t ret = app_usbd_midi_get(&m_app_midi,
-                                                m_rx_buffer);
-            if(ret) {
-                NRF_LOG_INFO("ret get %d", ret);
-            }
-            
-            NRF_LOG_HEXDUMP_INFO(m_rx_buffer, 4);
-            
-            bsp_board_led_invert(LED_MIDI_RX);
-            break;
-        }
+
         default:
             break;
     }
@@ -260,7 +292,7 @@ void bsp_event_callback(bsp_event_t ev)
         case BSP_EVENT_KEY_1:
         {
             uint8_t message[11] = {0xF0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0xF7};
-            app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
+            app_usbd_midi_sysex_write(&m_app_midi, 0, message, sizeof(message));
             break;
         }
         case BSP_EVENT_KEY_2:
@@ -276,7 +308,7 @@ void bsp_event_callback(bsp_event_t ev)
             break;
         }
         default:
-            return;   
+            return;
     }
 }
 
@@ -285,7 +317,7 @@ static void init_bsp(void)
     ret_code_t ret;
     ret = bsp_init(BSP_INIT_BUTTONS, bsp_event_callback);
 
-    UNUSED_RETURN_VALUE(bsp_event_to_button_action_assign(BSP_BOARD_BUTTON_0, 
+    UNUSED_RETURN_VALUE(bsp_event_to_button_action_assign(BSP_BOARD_BUTTON_0,
                                                           BSP_BUTTON_ACTION_RELEASE,
                                                           BTN_MIDI_KEY_0_RELEASE));
 
@@ -297,40 +329,9 @@ static void init_bsp(void)
 
 
 
-void timer_midi_event_handler(void* p_context)
-{
-    uint8_t message[3] = {0xB0, 48, 48};
-
-    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
-    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
-    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
-    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
-    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
-    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
-    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
-    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
-    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
-    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
-    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
-    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
-    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
-    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
-    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
-    app_usbd_midi_write(&m_app_midi, 0, message, sizeof(message));
-}
-
-void init_timer(void) 
-{
-    app_timer_create(&midi_timer,
-                            APP_TIMER_MODE_REPEATED,
-                            timer_midi_event_handler);
-}
-
-
 int main(void)
 {
     ret_code_t ret;
-
 
     static const app_usbd_config_t usbd_config = {
         .ev_state_proc = usbd_user_ev_handler,
@@ -345,7 +346,7 @@ int main(void)
     APP_ERROR_CHECK(ret);
 
     NRF_LOG_INFO("USBD midi example started.");
-    
+
     nrf_drv_clock_lfclk_request(NULL);
 
     while(!nrf_drv_clock_lfclk_is_running())
@@ -358,8 +359,6 @@ int main(void)
 
     // Initialize LEDs and buttons
     init_bsp();
-
-    init_timer(); 
 
     ret = app_usbd_init(&usbd_config);
     APP_ERROR_CHECK(ret);
@@ -378,7 +377,6 @@ int main(void)
     else
     {
         NRF_LOG_INFO("No USB power detection enabled\r\nStarting USB now");
-
         app_usbd_enable();
         app_usbd_start();
     }

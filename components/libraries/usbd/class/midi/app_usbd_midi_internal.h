@@ -63,6 +63,8 @@ extern "C" {
  */
 APP_USBD_CLASS_FORWARD(app_usbd_midi);
 
+
+
 /*lint -save -e165*/
 /**
  * @brief Forward declaration of @ref app_usbd_midi_user_event_e
@@ -83,6 +85,23 @@ typedef void (*app_usbd_midi_user_ev_handler_t)(app_usbd_class_inst_t const *  p
                                                 enum app_usbd_midi_user_event_e event);
 
 
+enum app_usbd_midi_rx_event_e;
+
+typedef struct {
+    uint8_t * p_data;
+    size_t len;
+} app_usbd_midi_msg_t;
+
+typedef struct {
+    uint8_t data[64];
+    size_t  len;
+} app_usbd_midi_rx_buf_t;
+
+typedef void (*app_usbd_midi_rx_handler_t)(app_usbd_class_inst_t const * p_inst,
+                                        enum app_usbd_midi_rx_event_e event,
+                                        uint8_t cable,
+                                        app_usbd_midi_msg_t *rx);
+
 /**
  * @brief Midi subclass descriptor.
  */
@@ -93,6 +112,12 @@ typedef struct {
    uint8_t const * const p_data;
 } app_usbd_midi_subclass_desc_t;
 
+typedef struct {
+    uint8_t * p_data;
+    size_t pos;
+    size_t left; 
+} app_usbd_midi_sysex_buf_t;
+
 /**
  * @brief Midi class part of class instance data.
  */
@@ -102,10 +127,11 @@ typedef struct {
 
     uint16_t ep_size;                                       //!< Endpoint size
 
-    app_usbd_audio_subclass_t type_streaming;               //!< Streaming type MIDISTREAMING/AUDIOSTREAMING (@ref app_usbd_midi_subclass_t)
-    nrf_ringbuf_t const * p_in_buf;                        //!< Out queue
-    nrf_ringbuf_t const * p_out_buf;                        //!< Out queue
+    app_usbd_audio_subclass_t       type_streaming;         //!< Streaming type MIDISTREAMING/AUDIOSTREAMING (@ref app_usbd_midi_subclass_t)
+    nrf_ringbuf_t const *           p_in_buf;               //!< Out queue
+    nrf_ringbuf_t const *           p_out_buf;              //!< Out queue
     app_usbd_midi_user_ev_handler_t user_ev_handler;        //!< User event handler
+    app_usbd_midi_rx_handler_t      user_rx_handler;        //!< User event handler
 } app_usbd_midi_inst_t;
 
 
@@ -113,9 +139,12 @@ typedef struct {
  * @brief Midi class context.
  */
 typedef struct {
-    app_usbd_audio_req_t    request;       //!< Audio class request.
-    bool                    sending;       //!< Sending flag
-    bool                    streaming;     //!< Streaming flag
+    app_usbd_audio_req_t        request;       //!< Audio class request.
+    bool                        sending;       //!< Sending flag
+    bool                        streaming;     //!< Streaming flag
+    app_usbd_midi_sysex_buf_t   sysex[16];
+    app_usbd_midi_rx_buf_t      rx_transfer[2];
+    uint8_t                     rx_buf;
 } app_usbd_midi_ctx_t;
 
 /**
@@ -159,18 +188,18 @@ typedef struct {
  * @param type_str                  Streaming type MIDISTREAMING/AUDIOSTREAMING.
  */
  #define APP_USBD_MIDI_INST_CONFIG(user_event_handler,              \
+                                    rx_handler,                     \
                                     midi_descriptor,                \
                                     ep_siz,                         \
                                     type_str,                       \
-                                    in_buf,                         \
-                                    out_buf)                        \
+                                    in_buf)                         \
     .inst = {                                                       \
          .user_ev_handler = user_event_handler,                     \
+         .user_rx_handler = rx_handler,                             \
          .p_midi_dsc      = midi_descriptor,                        \
          .ep_size         = ep_siz,                                 \
          .type_streaming  = type_str,                               \
          .p_in_buf        = in_buf,                                 \
-         .p_out_buf       = out_buf,                                \
     }
 
 
@@ -197,10 +226,9 @@ extern const app_usbd_class_methods_t app_usbd_midi_class_methods;
 #define APP_USBD_MIDI_GLOBAL_DEF_INTERNAL(instance_name,            \
                                     interfaces_configs,             \
                                     user_ev_handler,                \
+                                    rx_handler,                     \
                                     midi_descriptor,                \
-                                    in_buf_size,                    \
-                                    out_buf_size)                   \
-    NRF_RINGBUF_DEF(instance_name##_buf_out, out_buf_size);         \
+                                    in_buf_size)                    \
     NRF_RINGBUF_DEF(instance_name##_buf_in, in_buf_size);           \
     APP_USBD_CLASS_INST_GLOBAL_DEF(                                 \
         instance_name,                                              \
@@ -208,11 +236,11 @@ extern const app_usbd_class_methods_t app_usbd_midi_class_methods;
         &app_usbd_midi_class_methods,                               \
         interfaces_configs,                                         \
         (APP_USBD_MIDI_INST_CONFIG(user_ev_handler,                 \
+                                    rx_handler,                     \
                                     midi_descriptor,                \
                                     0,                              \
                                     APP_USBD_AUDIO_SUBCLASS_MIDISTREAMING, \
-                                    &instance_name##_buf_in,            \
-                                    &instance_name##_buf_out))      \
+                                    &instance_name##_buf_in))       \
     )
 
 

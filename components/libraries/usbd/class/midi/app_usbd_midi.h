@@ -99,9 +99,22 @@ APP_USBD_CLASS_TYPEDEF(app_usbd_midi,    \
                               app_usbd_midi_user_event_t   event);
  * @endcode
  */
+
+/**
+ * @brief Events passed to user event handler
+ *
+ * @note Example prototype of user event handler:
+ *
+ * @code
+   void (*app_usbd_midi_rx_handler_t)(app_usbd_class_inst_t const * p_inst,
+                                        enum app_usbd_midi_rx_event_e event,
+                                        uint8_t cable,
+                                        app_usbd_midi_msg_t *rx);
+ * @endcode
+ */
+
 typedef enum app_usbd_midi_user_event_e {
     APP_USBD_MIDI_USER_EVT_CLASS_REQ,
-    APP_USBD_MIDI_USER_EVT_RX_DONE,     /**< User event RX_DONE.    */
     APP_USBD_MIDI_USER_EVT_TX_DONE,     /**< User event TX_DONE.    */
 
     APP_USBD_MIDI_USER_EVT_PORT_OPEN,   /**< User event PORT_OPEN.  */
@@ -109,6 +122,11 @@ typedef enum app_usbd_midi_user_event_e {
 } app_usbd_midi_user_event_t;
 
 
+typedef enum app_usbd_midi_rx_event_e {
+    APP_USBD_MIDI_SYSEX_BUF_REQ,
+    APP_USBD_MIDI_SYSEX_RX_DONE,
+    APP_USBD_MIDI_RX_DONE,     
+} app_usbd_midi_rx_event_t;
 
 /*lint -restore*/
 
@@ -126,15 +144,15 @@ typedef enum app_usbd_midi_user_event_e {
 #define APP_USBD_MIDI_GLOBAL_DEF(instance_name,             \
                                   interfaces_configs,       \
                                   user_ev_handler,          \
+                                  rx_handler,               \
                                   midi_descriptor,          \
-                                  in_buf_size,              \
-                                  out_buf_size)             \
+                                  in_buf_size)              \
     APP_USBD_MIDI_GLOBAL_DEF_INTERNAL(instance_name,        \
                                        interfaces_configs,  \
                                        user_ev_handler,     \
+                                       rx_handler,          \
                                        midi_descriptor,     \
-                                       in_buf_size,         \
-                                       out_buf_size)        \
+                                       in_buf_size)         \
 
 /**
  * @brief Initializer of Midi descriptor.
@@ -143,15 +161,15 @@ typedef enum app_usbd_midi_user_event_e {
  * @param ...   Descriptor data.
 */
 
-#define APP_USBD_MIDI_DESCRIPTOR(name, ...)                   \
+#define APP_USBD_MIDI_DESCRIPTOR(name, ...)                     \
     static uint8_t const CONCAT_2(name,  _data)[] =             \
     {                                                           \
         __VA_ARGS__                                             \
     };                                                          \
-    static const app_usbd_midi_subclass_desc_t name =     \
+    static const app_usbd_midi_subclass_desc_t name =           \
     {   sizeof(CONCAT_2(name, _data)),                          \
-        APP_USBD_AUDIO_AS_IFACE_SUBTYPE_UNDEFINED,    /* !!! */   \
-        CONCAT_2(name,_data)                                           \
+        APP_USBD_AUDIO_AS_IFACE_SUBTYPE_UNDEFINED,    /* !!! */ \
+        CONCAT_2(name,_data)                                    \
     }
 
 
@@ -180,23 +198,41 @@ app_usbd_audio_class_get(app_usbd_class_inst_t const * p_inst)
 }
 
 /**
- * @brief Get midi data from the RX buffer.
- *
- */
-ret_code_t app_usbd_midi_get(app_usbd_midi_t const * p_midi,
-                              uint8_t *              p_buf);
-
-
-/**
  * @brief Write midi data to TX buffer and start sending.
  * 
  * Data has to be a single, complete midi message in order for transfer to be correctly formatted.
  *
  */
 ret_code_t app_usbd_midi_write(app_usbd_midi_t const *  p_midi,
-                               uint8_t                  cable_number, 
+                               uint8_t                  cable, 
                                uint8_t *                p_buf,
-                               uint32_t                 len);
+                               size_t                   len);
+
+
+/**
+ * @brief Write midi sysex data to TX buffer and start sending.
+ * 
+ * The complete sysex message may be sent using multiple calls to this function.
+ * If multiple calls are used, len has to be a multiple of three until the last 
+ * fragment of the sysex message, wich may be any length.
+ * This makes it possible to store a single sysex message in multiple buffers, 
+ * thus enabling support for infinite length sysex messages.
+ *
+ */
+ret_code_t app_usbd_midi_sysex_write(app_usbd_midi_t const *  p_midi,
+                               uint8_t                  cable, 
+                               uint8_t *                p_buf,
+                               size_t                   len);
+
+/**
+ * @brief Write raw usb midi data to TX buffer and start sending.
+ * 
+ * Data passed to this function has to be formated into USB-midi event packets. 
+ *
+ */
+ret_code_t app_usbd_midi_send_raw(app_usbd_midi_t const * p_midi,
+                                  const void *        p_buf,
+                                  size_t              len);
 
 
 /** @} */
